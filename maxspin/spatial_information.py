@@ -1,18 +1,15 @@
 
 from anndata import AnnData
-from enum import Enum
 from flax import linen as nn
 from functools import partial
 from jax.experimental.maps import FrozenDict
 from scipy import sparse
 from tqdm import tqdm
 from typing import Optional, Any, Callable, List, Union
-import flax
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import sys
 
 from .objectives import genewise_js
 
@@ -26,7 +23,7 @@ def spatial_information(
         seed: int=0,
         prior: Optional[str]="gamma",
         prior_k: float=0.1,
-        prior_θ: float=10.0,
+        prior_theta: float=10.0,
         prior_a: float=1.0,
         chunk_size: Optional[int]=None,
         alpha_layer: str="alt",
@@ -36,49 +33,106 @@ def spatial_information(
         nevalsamples: int=1000,
         preload: bool=True,
         quiet: bool=False):
-    """
-    Compute spatial information for each gene in an an AnnData, or list of AnnData
+    """Compute spatial information for each gene in an an `AnnData`, or list of `AnnData`
     objects.
 
-    TODO: Much more explanation.
+    If a list of of `AnnData` objects is used, the spatial information score is
+    computed jointly across each.
 
-    :param adatas: Either a single AnnData objects, or a list of AnnData objects.
-        If a list is given, they must all have the same set of genes in the same
-        order. Each AnnData must have a spatial neighborhood graph provided in
-        `obsp["spatial_connectivities"]` This can be done with the
-        `squidpy.gr.spatial_neighbors` function.
-    :param nwalksteps: Random walks take this many steps. Lengthening walks
-        (by increasing this parameter or `stepsize`) will make the test less
-        sensitive to smaller scale spatial variations, but more sensitive to
-        large scale variations.
-    :param stepsize: Each random walk step follows this many edges on the
-        neighborhood graph.
-    :param lr: Optimizer learning rate.
-    :param nepochs: Run the optimization step for this many iterations.
-    :param max_unimproved_count: Early stopping critera for optimization. If the
-        the MI lower bound has not been improved for any gene for this many
-        iterations, stop iterating.
-    :param seed: Random number generator seed.
-    :param chunk_size: How many genes to score at a time, mainly affecting memory
-        usage. When None, a reasonable number will be chosen to avoid using too much
-        memory.
-    :param alpha_layer: When using a beta prior, gives the name of the layer (in `adata.layers`)
-        for the α parameter.
-    :param beta_layer: When using a beta prior, gives the name of the layer (in `adata.layers`)
-        for the β parameter.
-    :param resample_frequency: Resample expression values after this many iterations.
-        This tends to be computationally expensive, so is not done every iteration
-        during optimization.
-    :param preload: If multiple AnnData objects are used, load everything into
-        GPU memory at once, rather than as needed. This is considerably faster
-        when GPU memory is not an issue.
-    :param quiet: Don't print stuff to stdout while running.
+    Every adata must have a spatial neighborhood graph provided. The easiest way
+    to do this is with:
+        `squidpy.gr.spatial_neighbors(adata, delaunay=True, coord_type="generic")`
+
+    Spatial information scores, which are added to the
+    `adata.var["spatial_information"]`, represent a lower bound on spatial
+    auto-mutual information. They are normalized so that 0 represents a total
+    lack of spatial coherence, and increasing positive numbers more spatial
+    coherence.
+
+    The bound on mutual information is computed by training extremely simple
+    classifiers on pairs of nearby cells/spots. The classifier is trained to
+    recognize when spatial arrangement has been shuffled. Informally, spatial
+    information is then defined as how easy it is to tell when expression have
+    been shuffled across spatial positions. In a highly spatially coherent
+    expression pattern, the distribution of pairs of nearby values shifts
+    dramatically. In the lack of any spatial coherence, this distribution does
+    not change.
+
+    Nearby pairs of nodes are sampled by performing random walks on the
+    neighborhood graph. The length of the walks partially controls the scale of
+    the spatial patterns that are detected. Longer walks will tend to recognize
+    only very broad spatial patterns, while short walks only very precise ones.
+    In that way, spatial information in not necessarily comparable when two
+    different walk lengths are used.
+
+    Args:
+        adatas: Either a single `AnnData` objects, or a list of `AnnData` objects.
+            If a list is given, they must all have the same set of genes in the
+            same order. Each `AnnData` must have a spatial neighborhood graph
+            provided in `obsp["spatial_connectivities"]` This can be done with
+            the `squidpy.gr.spatial_neighbors` function.
+        nwalksteps: Random walks take this many steps. Lengthening walks
+            (by increasing this parameter or `stepsize`) will make the test less
+            sensitive to smaller scale spatial variations, but more sensitive to
+            large scale variations.
+        stepsize: Each random walk step follows this many edges on the
+            neighborhood graph.
+        lr: Optimizer learning rate.
+        nepochs: Run the optimization step for this many iterations.
+        nevalsamples: Estimate MI bound by resampling expression and random
+            walks this many times.
+        max_unimproved_count: Early stopping criteria for optimization. If the
+            the MI lower bound has not been improved for any gene for this many
+            iterations, stop iterating.
+        seed: Random number generator seed.
+        prior: Account for uncertainty in expression estimates by resampling
+            expression while training. If `None`, do no resampling. If "gamma", use
+            a model appropriate for absolute counts, if "dirichlet" use a model
+            appropriate for proprotional counts. If set to "beta" in conjunction
+            with setting `alpha_layer` and `beta_layer` to two separate count layers,
+            use a model suitable for testing for spatial patterns in allelic balance.
+        prior_k: Set the `k` in a `Gamma(k, θ)` if prior is "gamma",
+        prior_theta: Set the `θ` in `Gamma(k, θ)` if prior is "gamma",
+        prior_a: Use either a `Beta(a, a)` or `Dirichlet(a, a, a, ...)` prior
+            depending on the value of `prior`.
+        chunk_size: How many genes to score at a time, mainly affecting memory
+            usage. When None, a reasonable number will be chosen to avoid using too much
+            memory.
+        alpha_layer: When using a beta prior, gives the name of the layer (in `adata.layers`)
+            for the α parameter.
+        beta_layer: When using a beta prior, gives the name of the layer (in `adata.layers`)
+            for the β parameter.
+        receiver_signals: Instead of computing auto-spatial mutual information
+            for each gene, compute the spatial mutual information between
+            each gene and the given signal, which must be either 1-dimensional
+            or the same number of dimensions as there are genes. This signal is
+            not resampled during training.
+        resample_frequency: Resample expression values after this many iterations.
+            This tends to be computationally expensive, so is not done every iteration
+            during optimization.
+        preload: If multiple AnnData objects are used, load everything into
+            GPU memory at once, rather than as needed. This is considerably faster
+            when GPU memory is not an issue.
+        quiet: Don't print stuff to stdout while running.
+
+    Returns:
+        Modifies each `adata` with with the following keys:
+
+        - `anndata.AnnData.var["spatial_information"]`: Lower bound on spatial
+            information for each gene.
+        - `anndata.AnnData.layers["spatial_information_acc"]`: Per spot/cell
+            classifier accuracy. Useful for visualizing what regions were
+            inferred to have high spatial coherence..
     """
 
     if isinstance(adatas, AnnData):
         adatas = [adatas]
 
     check_same_genes(adatas)
+    if not all(["spatial_connectivities" in adata.obsp for adata in adatas]):
+        raise Exception(
+            """Every adata must have 'spatial_connectivities' set. Call, for
+            example, `squidpy.gr.spatial_neighbors(adata, delaunay=True, coord_type="generic")`""")
 
     nsamples = len(adatas)
     quiet or print(f"nsamples: {nsamples}")
@@ -167,7 +221,7 @@ def spatial_information(
             βs=βs_chunk,
             desc=f"Scoring genes {gene_from} to {gene_to}",
             prior_k=prior_k,
-            prior_θ=prior_θ,
+            prior_θ=prior_theta,
             nwalksteps=nwalksteps,
             seed=seed,
             objective=genewise_js,
@@ -214,7 +268,7 @@ def score_chunk(
         preload: bool,
         quiet: bool):
     """
-
+    Helper function to compute information scores for some subset of the genes.
     """
 
     nsamples = len(us)
@@ -505,7 +559,9 @@ class GenewiseNodePairClassifier(nn.Module):
 
 class MINE(nn.Module):
     """
-    Mutual information neural estimation.
+    Mutual information neural estimation. Shuffle the node signals, and train a
+    classifier to distinguish shuffled from unshuffled, bounding mutual
+    information.
     """
 
     training: bool
