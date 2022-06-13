@@ -13,6 +13,8 @@ import optax
 
 from .objectives import genewise_js
 
+Array = Any
+
 def spatial_information(
         adatas: Union[AnnData, list[AnnData]],
         nwalksteps: int=2,
@@ -214,6 +216,8 @@ def spatial_information(
         scores_chunk, tpr_chunk = score_chunk(
             us=us_chunk,
             sample_v=sample_v,
+            u_index=None,
+            v_index=None,
             random_walk_graphs=random_walk_graphs,
             prior=prior,
             scales=scales,
@@ -248,6 +252,8 @@ def spatial_information(
 def score_chunk(
         us: List[Any],
         sample_v: Optional[Callable],
+        u_index: Optional[Array],
+        v_index: Optional[Array],
         random_walk_graphs: List[Any],
         prior: Optional[str],
         scales: Optional[List[Any]],
@@ -271,9 +277,11 @@ def score_chunk(
     Helper function to compute information scores for some subset of the genes.
     """
 
+    assert (u_index is None and v_index is None) or (u_index.shape == v_index.shape)
+
     nsamples = len(us)
     ncs = [u.shape[0] for u in us]
-    ngenes = us[0].shape[1]
+    ngenes = us[0].shape[1] if u_index is None else u_index.shape[0]
 
     us_samples = [None for _ in range(nsamples)]
     vs_samples = [None for _ in range(nsamples)]
@@ -289,8 +297,8 @@ def score_chunk(
     vars = MINE(training=True, **modelargs).init(
         init_key,
         key,
-        jax.device_put(us[0]),
-        jax.device_put(us[0]),
+        jax.device_put(us[0] if u_index is None else us[0][:,u_index]),
+        jax.device_put(us[0] if u_index is None else us[0][:,u_index]),
         jnp.arange(us[0].shape[0]))
 
     model_state, params = vars.pop("params")
@@ -335,7 +343,7 @@ def score_chunk(
             us_samples[i] = sample_signals_gamma(
                 step_key, u, u_means[i], u_stds[i], post_θ, prior_k)
         elif prior == "beta":
-            vs_samples[i] = sample_signals_beta(
+            us_samples[i] = sample_signals_beta(
                 step_key, αs[i], βs[i])
         else:
             us_samples[i] = u
@@ -362,8 +370,8 @@ def score_chunk(
 
             model_state, params, opt_state, mi_lower_bounds, metrics = train_step(
                 modelargs,
-                us_samples[i],
-                vs_samples[i],
+                us_samples[i] if u_index is None else us_samples[i][:,u_index],
+                vs_samples[i] if v_index is None else vs_samples[i][:,v_index],
                 walk_receivers,
                 model_state, params, opt_state, step_key)
 
@@ -413,8 +421,8 @@ def score_chunk(
                 modelargs,
                 vars,
                 step_key,
-                vs_samples[i],
-                us_samples[i],
+                us_samples[i] if u_index is None else us_samples[i][:,u_index],
+                vs_samples[i] if v_index is None else vs_samples[i][:,v_index],
                 walk_receivers)
 
             mi_lower_bounds_sum += mi_lower_bounds
