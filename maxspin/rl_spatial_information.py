@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import sys
 
 from .objectives import genewise_js
 from .spatial_information import \
@@ -131,6 +132,7 @@ def rl_spatial_information(
         objective=genewise_js,
         optimizer=optimizer,
         train_step=train_step,
+        classifier=GenePairNodePairClassifier,
         nepochs=nepochs,
         resample_frequency=resample_frequency,
         nevalsamples=nevalsamples,
@@ -145,4 +147,58 @@ def rl_spatial_information(
         adata.uns["pair_spatial_information_gene2"] = gene_pair_b
         adata.uns["pair_spatial_information"] = np.array(scores_chunk)
         adata.uns["pair_spatial_information_acc"] = np.array(tpr_chunk)
+
+
+class GenePairNodePairClassifier(nn.Module):
+    """
+    Genewise classifier on pairs of nodes representing different genes.
+    """
+    training: bool
+
+    @nn.compact
+    def __call__(self, walk_start, walk_end):
+        ngenes = walk_start.shape[1]
+        penalty = 0.0
+
+        w_diff = -nn.softplus(self.param(
+            "diff_weight",
+            lambda key, shape: jnp.full(shape, -4.0),
+            (1, ngenes)))
+
+        w_sum = nn.softplus(self.param(
+            "sum_weight",
+            lambda key, shape: jnp.full(shape, -4.0),
+            (1, ngenes)))
+
+        s_sum = self.param(
+            "sum_shift",
+            nn.initializers.zeros,
+            (1, ngenes))
+
+        b = self.param(
+            "bias",
+            nn.initializers.zeros,
+            (1, ngenes))
+
+        start_scale = nn.softplus(self.param(
+            "start_scale",
+            nn.initializers.ones,
+            (1, ngenes)))
+
+        end_scale = nn.softplus(self.param(
+            "end_scale",
+            nn.initializers.ones,
+            (1, ngenes)))
+
+        # walk_start *= start_scale
+        # walk_end *= end_scale
+
+        score = b + \
+            w_diff * jnp.abs(walk_start - walk_end) + \
+            w_sum * jnp.abs(walk_start + walk_end - s_sum)
+
+        # score = b + \
+        #     w_diff * jnp.abs(walk_start - walk_end)
+
+        return score, penalty
 

@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import sys
 
 from .objectives import genewise_js
 
@@ -27,6 +28,7 @@ def spatial_information(
         prior_k: float=0.1,
         prior_theta: float=10.0,
         prior_a: float=1.0,
+        estimate_scales: bool=False,
         chunk_size: Optional[int]=None,
         alpha_layer: str="alt",
         beta_layer: str="ref",
@@ -93,10 +95,14 @@ def spatial_information(
             appropriate for proprotional counts. If set to "beta" in conjunction
             with setting `alpha_layer` and `beta_layer` to two separate count layers,
             use a model suitable for testing for spatial patterns in allelic balance.
+            If "gaussian", the model expects a matrix nammed `std` in `obsm` holding
+            standard deviations for the estimates held in `X`.
         prior_k: Set the `k` in a `Gamma(k, θ)` if prior is "gamma",
         prior_theta: Set the `θ` in `Gamma(k, θ)` if prior is "gamma",
         prior_a: Use either a `Beta(a, a)` or `Dirichlet(a, a, a, ...)` prior
             depending on the value of `prior`.
+        estimate_scales: When using a dirichlet prior, try to estimate scales
+            to adjust proportions to capture relative absolute abundance
         chunk_size: How many genes to score at a time, mainly affecting memory
             usage. When None, a reasonable number will be chosen to avoid using too much
             memory.
@@ -149,6 +155,7 @@ def spatial_information(
         max_unimproved_count = nepochs
 
     us = [adata.X if isinstance(adata.X, np.ndarray) else adata.X.toarray() for adata in adatas]
+    us = [u.astype(np.float32) for u in us]
 
     Ps = [neighbor_transition_matrix(adata) for adata in adatas]
     random_walk_graphs = [random_walk_matrix(P, nc, stepsize) for (nc, P) in zip(ncs, Ps)]
@@ -159,8 +166,8 @@ def spatial_information(
         chunk_size = max(1, int(1e8 / 4 / max(ncs)))
     quiet or print(f"chunk size: {chunk_size}")
 
-    if prior is not None and prior not in ["gamma", "beta", "dirichlet"]:
-        raise Exception("Supported prior types are None, \"gamma\", \"beta\", or \"dirichlet\"")
+    if prior is not None and prior not in ["gamma", "beta", "dirichlet", "gaussian"]:
+        raise Exception("Supported prior types are None, \"gamma\", \"beta\", \"dirichlet\", or \"gaussian\"")
 
     assert receiver_signals is None or len(receiver_signals) == nsamples
 
@@ -178,7 +185,10 @@ def spatial_information(
 
     scales = None
     if prior == "dirichlet":
-        scales = estimate_scale_factors(us, prior_a)
+        if estimate_scales:
+            scales = estimate_scale_factors(us, prior_a)
+        else:
+            scales = [np.ones((u.shape[0], 1), dtype=np.float32) for u in us]
 
     αs = []
     βs = []
@@ -190,6 +200,13 @@ def spatial_information(
             αs.append(adata.layers[alpha_layer])
             βs.append(adata.layers[beta_layer])
 
+    σs = []
+    if prior == "gaussian":
+        for adata in adatas:
+            if "std" not in adata.obsm:
+                raise Exception("Gaussian prior requires a `std` matrix in `obsm`")
+            σs.append(adata.obsm["std"])
+
     optimizer = optax.adam(learning_rate=lr)
     train_step = make_train_step(optimizer)
 
@@ -200,6 +217,9 @@ def spatial_information(
         # quiet or print(f"Scoring gene {gene_from} to gene {gene_to-1}")
 
         us_chunk = [u[:,gene_from:gene_to] for u in us]
+        αs_chunk = None
+        βs_chunk = None
+        σs_chunk = None
 
         if prior == "beta":
             αs_chunk = [α[:,gene_from:gene_to] + prior_a for α in αs]
@@ -208,10 +228,9 @@ def spatial_information(
             for u in us_chunk:
                 u += prior_a
             αs_chunk = [np.sum(u, axis=1) for u in us_chunk]
-            βs_chunk = [np.sum(u, axis=1) - α for (α, u) in zip(αs_chunk, us)]
-        else:
-            αs_chunk = None
-            βs_chunk = None
+            βs_chunk = [np.sum(u + prior_a, axis=1) - α for (α, u) in zip(αs_chunk, us)]
+        elif prior == "gaussian":
+            σs_chunk = [σ[:,gene_from:gene_to] for σ in σs]
 
         scores_chunk, tpr_chunk = score_chunk(
             us=us_chunk,
@@ -223,6 +242,7 @@ def spatial_information(
             scales=scales,
             αs=αs_chunk,
             βs=βs_chunk,
+            σs=σs_chunk,
             desc=f"Scoring genes {gene_from} to {gene_to}",
             prior_k=prior_k,
             prior_θ=prior_theta,
@@ -231,6 +251,7 @@ def spatial_information(
             objective=genewise_js,
             optimizer=optimizer,
             train_step=train_step,
+            classifier=GeneNodePairClassifier,
             nepochs=nepochs,
             resample_frequency=resample_frequency,
             nevalsamples=nevalsamples,
@@ -259,6 +280,7 @@ def score_chunk(
         scales: Optional[List[Any]],
         αs: Optional[List[Any]],
         βs: Optional[List[Any]],
+        σs: Optional[List[Any]],
         desc: str,
         prior_k: float,
         prior_θ: float,
@@ -267,6 +289,7 @@ def score_chunk(
         objective: Callable,
         optimizer: optax.GradientTransformation,
         train_step: Callable,
+        classifier: Callable,
         nepochs: int,
         resample_frequency: int,
         nevalsamples: int,
@@ -290,6 +313,7 @@ def score_chunk(
 
     modelargs = FrozenDict({
         "objective": objective,
+        "classifier": classifier,
     })
 
     key, init_key = jax.random.split(key)
@@ -307,6 +331,15 @@ def score_chunk(
     if preload:
         random_walk_graphs = jax.device_put(random_walk_graphs)
         us = jax.device_put(us)
+
+        if σs is not None:
+            σs = [jax.device_put(σ) for σ in σs]
+
+        if αs is not None:
+            αs = [jax.device_put(α) for α in αs]
+
+        if βs is not None:
+            βs = [jax.device_put(β) for β in βs]
 
     # compute means and stds over point estimates so we can shift and scale
     # to make training a little easier.
@@ -345,6 +378,9 @@ def score_chunk(
         elif prior == "beta":
             us_samples[i] = sample_signals_beta(
                 step_key, αs[i], βs[i])
+        elif prior == "gaussian":
+            us_samples[i] = sample_signals_gaussian(
+                step_key, u, σs[i], u_means[i], u_stds[i])
         else:
             us_samples[i] = u
 
@@ -526,9 +562,9 @@ def check_same_genes(adatas: list[AnnData]):
 
 
 
-class GenewiseNodePairClassifier(nn.Module):
+class GeneNodePairClassifier(nn.Module):
     """
-    Genewise classifier on pairs of nodes.
+    Classifier on pairs of nodes.
     """
     training: bool
 
@@ -574,6 +610,7 @@ class MINE(nn.Module):
 
     training: bool
     objective: Callable
+    classifier: Callable
 
     @nn.compact
     def __call__(self, key, u, v, walk_receivers):
@@ -581,7 +618,7 @@ class MINE(nn.Module):
         u_perm = jax.random.permutation(key, u)
         v_perm = jax.random.permutation(key, v)
 
-        fe = GenewiseNodePairClassifier(training=self.training)
+        fe = self.classifier(training=self.training)
 
         score, penalty = fe(u, v[walk_receivers])
         perm_score, _ = fe(u_perm, v_perm[walk_receivers])
@@ -644,3 +681,9 @@ def sample_signals_dirichlet(key, v, α, β, v_mean, v_std, scale):
 @jax.jit
 def sample_signals_beta(key, α, β):
     return jnp.log(jax.random.beta(key, α, β))
+
+
+@jax.jit
+def sample_signals_gaussian(key, μ, σ, v_mean, v_std):
+    x = jax.random.normal(key, μ.shape) * σ + μ
+    return (x - v_mean) / v_std
