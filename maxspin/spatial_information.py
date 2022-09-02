@@ -163,7 +163,7 @@ def spatial_information(
     # Try to calibrate chunk_size to not blow out GPU memory. Setting it here
     # to use about 1GB
     if chunk_size is None:
-        chunk_size = max(1, int(1e8 / 4 / max(ncs)))
+        chunk_size = min(ngenes, max(1, int(1e8 / 4 / max(ncs))))
     quiet or print(f"chunk size: {chunk_size}")
 
     if prior is not None and prior not in ["gamma", "beta", "dirichlet", "gaussian"]:
