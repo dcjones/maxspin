@@ -23,20 +23,71 @@ def pairwise_spatial_information(
         stepsize: int=5,
         lr: float=1e-2,
         nepochs: int=8000,
+        nevalsamples: int=1000,
         max_unimproved_count: Optional[int]=50,
         seed: int=0,
         prior: Optional[str]="gamma",
         prior_k: float=0.1,
         prior_theta: float=10.0,
         prior_a: float=1.0,
-        estimate_scales: bool=False,
         chunk_size: Optional[int]=None,
         alpha_layer: str="alt",
         beta_layer: str="ref",
         resample_frequency: int=10,
-        nevalsamples: int=1000,
         preload: bool=True,
         quiet: bool=False):
+    """
+    Compute pairwise spatial information for each pair of genes in an `AnnData`
+    or list of `AnnData` objects.
+
+    Args:
+        adatas: Either a single `AnnData` objects, or a list of `AnnData` objects.
+            If a list is given, they must all have the same set of genes in the
+            same order. Each `AnnData` must have a spatial neighborhood graph
+            provided in `obsp["spatial_connectivities"]` This can be done with
+            the `squidpy.gr.spatial_neighbors` function.
+        nwalksteps: Random walks take this many steps. Lengthening walks
+            (by increasing this parameter or `stepsize`) will make the test less
+            sensitive to smaller scale spatial variations, but more sensitive to
+            large scale variations.
+        stepsize: Each random walk step follows this many edges on the
+            neighborhood graph.
+        lr: Optimizer learning rate.
+        nepochs: Run the optimization step for this many iterations.
+        nevalsamples: Estimate MI bound by resampling expression and random
+            walks this many times.
+        max_unimproved_count: Early stopping criteria for optimization. If the
+            the MI lower bound has not been improved for any gene for this many
+            iterations, stop iterating.
+        seed: Random number generator seed.
+        prior: Account for uncertainty in expression estimates by resampling
+            expression while training. If `None`, do no resampling. If "gamma", use
+            a model appropriate for absolute counts. If set to "beta" in conjunction
+            with setting `alpha_layer` and `beta_layer` to two separate count layers,
+            use a model suitable for testing for spatial patterns in allelic balance.
+            If "gaussian", the model expects a matrix nammed `std` in `obsm` holding
+            standard deviations for the estimates held in `X`.
+        prior_k: Set the `k` in a `Gamma(k, θ)` if prior is "gamma",
+        prior_theta: Set the `θ` in `Gamma(k, θ)` if prior is "gamma",
+        prior_a: Use a `Beta(a, a)` prior.
+        chunk_size: How many genes to score at a time, mainly affecting memory
+            usage. When None, a reasonable number will be chosen to avoid using too much
+            memory.
+        resample_frequency: Resample expression values after this many iterations.
+            This tends to be computationally expensive, so is not done every iteration
+            during optimization.
+        preload: If multiple AnnData objects are used, load everything into
+            GPU memory at once, rather than as needed. This is considerably faster
+            when GPU memory is not an issue.
+        quiet: Don't print stuff to stdout while running.
+
+
+    Returns:
+        Modifies each `adata` adding:
+
+          - `anndata.AnnData.varp["pairwise_spatial_information"]`: Pairwise
+             spatial information matrix between genes.
+    """
 
     if isinstance(adatas, AnnData):
         adatas = [adatas]
