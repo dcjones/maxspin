@@ -11,22 +11,26 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import sys
+import h5py
 
 from .objectives import genewise_js
+from .binning import spatially_bin_adata
 
 Array = Any
 
 def spatial_information(
         adatas: Union[AnnData, list[AnnData]],
-        nwalksteps: int=2,
+        nwalksteps: int=1,
         stepsize: int=5,
         lr: float=1e-2,
         nepochs: int=8000,
+        binsizes: List[int]=[4, 8, 16],
+        binweights: Union[Callable, List[float]]=lambda binsize: np.sqrt(binsize),
         max_unimproved_count: Optional[int]=50,
         seed: int=0,
         prior: Optional[str]="gamma",
-        prior_k: float=0.1,
-        prior_theta: float=10.0,
+        prior_k: float=0.01,
+        prior_theta: float=1.0,
         prior_a: float=1.0,
         estimate_scales: bool=False,
         chunk_size: Optional[int]=None,
@@ -148,6 +152,43 @@ def spatial_information(
     ngenes = adatas[0].shape[1]
     quiet or print(f"ngenes: {ngenes}")
 
+    # Binning: bin cells/spots and treat it as further observations, which
+    # can boost sensitivity with sparse data
+    concatenated_adatas = []
+    cell_counts = []
+    objective_weights = []
+    for adata in adatas:
+        concatenated_adatas.append(adata)
+        cell_counts.append(1)
+        objective_weights.append(1.0)
+
+        binned_adatas = [spatially_bin_adata(adata, binsize) for binsize in binsizes]
+        concatenated_adatas.extend(binned_adatas)
+        cell_counts.extend(binsizes)
+
+        if isinstance(binweights, Callable):
+            objective_weights.extend([binweights(binsize) for binsize in binsizes])
+        elif isinstance(binweights, List):
+            assert len(binsizes) == len(binweights)
+            objective_weights.extend(binweights)
+
+    adatas = concatenated_adatas
+
+    # Find a reasonable scale for coordinates
+    mean_neighbor_dist = 0.0
+    total_cell_count = 0
+    for adata in adatas:
+        neighbors = adata.obsp["spatial_connectivities"].tocoo()
+        xy = adata.obsm["spatial"]
+        mean_neighbor_dist += \
+            np.sum(np.sqrt(np.sum(np.square(xy[neighbors.row,:] - xy[neighbors.col,:]), axis=1)))
+        total_cell_count += xy.shape[0]
+    mean_neighbor_dist /= total_cell_count
+
+    xys = []
+    for adata in adatas:
+        xys.append(jnp.array(adata.obsm["spatial"] / mean_neighbor_dist))
+
     ncs = [adata.shape[0] for adata in adatas]
     quiet or print(f"ncells: {ncs}")
 
@@ -157,7 +198,7 @@ def spatial_information(
     us = [adata.X if isinstance(adata.X, np.ndarray) else adata.X.toarray() for adata in adatas]
     us = [u.astype(np.float32) for u in us]
 
-    Ps = [neighbor_transition_matrix(adata) for adata in adatas]
+    Ps = [neighbor_transition_matrix(adata, self_edges=True) for adata in adatas]
     random_walk_graphs = [random_walk_matrix(P, nc, stepsize) for (nc, P) in zip(ncs, Ps)]
 
     # Try to calibrate chunk_size to not blow out GPU memory. Setting it here
@@ -207,7 +248,14 @@ def spatial_information(
                 raise Exception("Gaussian prior requires a `std` matrix in `obsm`")
             σs.append(adata.obsm["std"])
 
-    optimizer = optax.adam(learning_rate=lr)
+    # Doesn't seem to make a difference, but hypothetically could be more stable
+    # when optimizing over a collection of very different datasets.
+    optimizer = optax.MultiSteps(
+        optax.adam(learning_rate=lr),
+        every_k_schedule=len(adatas))
+
+    # optimizer = optax.adam(learning_rate=lr)
+
     train_step = make_train_step(optimizer)
 
     scores_chunks = []
@@ -233,7 +281,10 @@ def spatial_information(
             σs_chunk = [σ[:,gene_from:gene_to] for σ in σs]
 
         scores_chunk, tpr_chunk = score_chunk(
+            xys=xys,
             us=us_chunk,
+            cell_counts=cell_counts,
+            objective_weights=objective_weights,
             sample_v=sample_v,
             u_index=None,
             v_index=None,
@@ -267,11 +318,18 @@ def spatial_information(
 
     for adata in adatas:
         adata.var["spatial_information"] = np.array(scores)
-        adata.layers["spatial_information_acc"] = np.array(tpr)
+
+        # This is mostly monotonic, and arguably more interpretable
+        # adata.var["spatial_information"] = np.mean(np.array(tpr), axis=0)
+
+    adatas[0].layers["spatial_information_acc"] = np.array(tpr)
 
 
 def score_chunk(
+        xys: List[Any],
         us: List[Any],
+        cell_counts: List[Any],
+        objective_weights: List[Any],
         sample_v: Optional[Callable],
         u_index: Optional[Array],
         v_index: Optional[Array],
@@ -312,6 +370,7 @@ def score_chunk(
     key = jax.random.PRNGKey(seed)
 
     modelargs = FrozenDict({
+        "nsamples": nsamples,
         "objective": objective,
         "classifier": classifier,
     })
@@ -321,9 +380,12 @@ def score_chunk(
     vars = MINE(training=True, **modelargs).init(
         init_key,
         key,
+        0, xys[0][:,0],
         jax.device_put(us[0] if u_index is None else us[0][:,u_index]),
         jax.device_put(us[0] if u_index is None else us[0][:,u_index]),
-        jnp.arange(us[0].shape[0]))
+        jnp.arange(us[0].shape[0]),
+        objective_weights[0])
+
 
     model_state, params = vars.pop("params")
     opt_state = optimizer.init(params)
@@ -354,9 +416,9 @@ def score_chunk(
             u_est /= scales[i]
             u_est = jnp.log1p(1e6 * u_est)
         elif prior == "gamma":
-            u_est = jnp.log1p((u+prior_k) * post_θ)
+            u_est = jnp.log1p((u+prior_k*cell_counts[i]) * post_θ / cell_counts[i])
         else:
-            u_est = u
+            u_est = u / cell_counts[i]
 
         u_means.append(jnp.mean(u_est, axis=0))
         u_stds.append(jnp.std(u_est, axis=0) + 1e-1)
@@ -374,13 +436,13 @@ def score_chunk(
                 step_key, u, αs[i], βs[i], u_means[i], u_stds[i], scales[i])
         elif prior == "gamma":
             us_samples[i] = sample_signals_gamma(
-                step_key, u, u_means[i], u_stds[i], post_θ, prior_k)
+                step_key, u, u_means[i], u_stds[i], post_θ, prior_k, cell_counts[i])
         elif prior == "beta":
             us_samples[i] = sample_signals_beta(
                 step_key, αs[i], βs[i])
         elif prior == "gaussian":
             us_samples[i] = sample_signals_gaussian(
-                step_key, u, σs[i], u_means[i], u_stds[i])
+                step_key, u, σs[i], u_means[i], u_stds[i], cell_counts[i])
         else:
             us_samples[i] = u
 
@@ -389,6 +451,8 @@ def score_chunk(
     # training loop
     prog = None if quiet else tqdm(total=nepochs, desc=desc)
     prog_update_freq = 50
+
+    # debug_output = h5py.File("samples.h5", "w")
 
     for epoch in range(nepochs):
         mi_lower_bounds_sum = jnp.zeros(ngenes, dtype=jnp.float32)
@@ -401,17 +465,27 @@ def score_chunk(
                 nwalksteps, step_key, jax.device_put(receivers),
                 jax.device_put(receivers_logits))
 
+            distances = jnp.sqrt(jnp.sum(jnp.square(xys[i] - xys[i][walk_receivers,:]), axis=1))
+
+            # print((jnp.min(distances), jnp.max(distances)))
+
             if epoch % resample_frequency == 0:
                 resample_signals(i)
 
             model_state, params, opt_state, mi_lower_bounds, metrics = train_step(
                 modelargs,
+                cell_counts[i], distances,
                 us_samples[i] if u_index is None else us_samples[i][:,u_index],
                 vs_samples[i] if v_index is None else vs_samples[i][:,v_index],
-                walk_receivers,
+                walk_receivers, objective_weights[i],
                 model_state, params, opt_state, step_key)
 
             mi_lower_bounds_sum += mi_lower_bounds
+
+            # Diagnostics
+            # debug_output.create_dataset(f"senders_{i}", data=np.array(us_samples[i]))
+            # debug_output.create_dataset(f"receivers_{i}", data=np.array(us_samples[i][walk_receivers,:]))
+            # debug_output.create_dataset(f"distances_{i}", data=np.array(distances))
 
         unimproved_count += 1
         unimproved_count = unimproved_count.at[mi_lower_bounds_sum > best_mi_bounds].set(0)
@@ -450,6 +524,8 @@ def score_chunk(
                 nwalksteps, step_key, jax.device_put(receivers),
                 jax.device_put(receivers_logits))
 
+            distances = jnp.sqrt(jnp.sum(jnp.square(xys[i] - xys[i][walk_receivers,:]), axis=1))
+
             if epoch % resample_frequency == 0:
                 resample_signals(i)
 
@@ -457,9 +533,10 @@ def score_chunk(
                 modelargs,
                 vars,
                 step_key,
+                cell_counts[i], distances,
                 us_samples[i] if u_index is None else us_samples[i][:,u_index],
                 vs_samples[i] if v_index is None else vs_samples[i][:,v_index],
-                walk_receivers)
+                walk_receivers, objective_weights[i])
 
             mi_lower_bounds_sum += mi_lower_bounds
             if i == 0:
@@ -570,8 +647,16 @@ class GeneNodePairClassifier(nn.Module):
 
     @nn.compact
     def __call__(self, walk_start, walk_end):
-        ngenes = walk_start.shape[1]
+        ncells, ngenes = walk_start.shape
         penalty = 0.0
+
+        shift = self.param(
+            "shift",
+            lambda key, shape: jnp.full(shape, 0.0, dtype=jnp.float32),
+            (1, ngenes))
+
+        walk_start += shift
+        walk_end += shift
 
         w_diff = -nn.softplus(self.param(
             "diff_weight",
@@ -583,10 +668,10 @@ class GeneNodePairClassifier(nn.Module):
             lambda key, shape: jnp.full(shape, -4.0),
             (1, ngenes)))
 
-        s_sum = self.param(
-            "sum_shift",
-            nn.initializers.zeros,
-            (1, ngenes))
+        w_prod = nn.softplus(self.param(
+            "prod_weight",
+            lambda key, shape: jnp.full(shape, -4.0, dtype=jnp.float32),
+            (1, ngenes)))
 
         b = self.param(
             "bias",
@@ -594,8 +679,9 @@ class GeneNodePairClassifier(nn.Module):
             (1, ngenes))
 
         score = b + \
+            w_prod * walk_start * walk_end + \
             w_diff * jnp.abs(walk_start - walk_end) + \
-            w_sum * jnp.abs(walk_start + walk_end - s_sum)
+            w_sum * jnp.abs(walk_start + walk_end)
 
         return score, penalty
 
@@ -609,11 +695,14 @@ class MINE(nn.Module):
     """
 
     training: bool
+    nsamples: int
     objective: Callable
     classifier: Callable
 
     @nn.compact
-    def __call__(self, key, u, v, walk_receivers):
+    def __call__(self, key, cell_count, distances, u, v, walk_receivers, objective_weights):
+        ncells, ngenes = v.shape
+
         # intentionally using the same key to get the same permutation here
         u_perm = jax.random.permutation(key, u)
         v_perm = jax.random.permutation(key, v)
@@ -623,9 +712,22 @@ class MINE(nn.Module):
         score, penalty = fe(u, v[walk_receivers])
         perm_score, _ = fe(u_perm, v_perm[walk_receivers])
 
-        mi_bounds = self.objective(score, perm_score)
+        # weighting scores by distance of the sampled neighbors, and excluding
+        # walks that end up where they started.
+        distance_falloff = nn.softplus(self.param(
+            "distance_falloff",
+            lambda key, shape: jnp.full(shape, 1.0, dtype=jnp.float32),
+            ngenes))
+        distance_falloff = jnp.expand_dims(distance_falloff, 0)
+        nonzero_distance = jnp.expand_dims(distances > 0.0, 1)
+        distance_weight = jnp.exp(-jnp.expand_dims(distances, 1)/distance_falloff) * nonzero_distance
 
-        metrics = {"tp": score > perm_score}
+        score *= distance_weight
+        perm_score *= distance_weight
+
+        mi_bounds = self.objective(score, perm_score) * objective_weights
+
+        metrics = {"tp": nn.sigmoid(score - perm_score)}
 
         return mi_bounds - penalty, metrics
 
@@ -633,18 +735,18 @@ class MINE(nn.Module):
 # Copying an idiom from: https://github.com/deepmind/optax/issues/197#issuecomment-974505149
 def make_train_step(optimizer):
     @partial(jax.jit, static_argnums=(0,))
-    def train_step(modelargs, u, v, walk_receivers, model_state, params, opt_state, key):
+    def train_step(modelargs, cell_count, distances, u, v, walk_receivers, objective_weights, model_state, params, opt_state, key):
         def loss_fn(params):
             vars = {"params": params, **model_state}
             (mi_lower_bounds, metrics), new_model_state = MINE(
                 training=True, **modelargs).apply(
-                    vars, key, u, v, walk_receivers, mutable=["batch_stats"])
+                    vars, key, cell_count, distances, u, v, walk_receivers, objective_weights, mutable=["batch_stats"])
             return -jnp.mean(mi_lower_bounds), (mi_lower_bounds, metrics, new_model_state)
 
         grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
         (neg_mean_mi_lower_bounds, (mi_lower_bounds, metrics, model_state)), grads = grad_fn(params)
 
-        updates, opt_state = optimizer.update(grads, opt_state)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
 
         return model_state, params, opt_state, mi_lower_bounds, metrics
@@ -653,19 +755,20 @@ def make_train_step(optimizer):
 
 
 @partial(jax.jit, static_argnums=(0,))
-def eval_step(modelargs, vars, key, v, u, walk_receivers):
+def eval_step(modelargs, vars, key, cell_count, distances, v, u, walk_receivers, objective_weights):
     (mi_lower_bounds, metrics), new_model_state = MINE(training=False, **modelargs).apply(
         vars, key,
-        v, u,
+        cell_count, distances, v, u,
         walk_receivers,
+        objective_weights,
         mutable=["batch_stats"])
 
     return mi_lower_bounds, metrics["tp"]
 
 
 @jax.jit
-def sample_signals_gamma(key, v, v_mean, v_std, post_θ, prior_k):
-    v_sample = jnp.log1p(post_θ * jax.random.gamma(key, v + prior_k))
+def sample_signals_gamma(key, v, v_mean, v_std, post_θ, prior_k, cell_count):
+    v_sample = jnp.log1p(post_θ * jax.random.gamma(key, v + prior_k * cell_count) / cell_count)
     v_sample = (v_sample - v_mean) / v_std
     return v_sample
 
@@ -684,6 +787,6 @@ def sample_signals_beta(key, α, β):
 
 
 @jax.jit
-def sample_signals_gaussian(key, μ, σ, v_mean, v_std):
-    x = jax.random.normal(key, μ.shape) * σ + μ
+def sample_signals_gaussian(key, μ, σ, v_mean, v_std, cell_count):
+    x = (jax.random.normal(key, μ.shape) * σ + μ) / cell_count
     return (x - v_mean) / v_std
