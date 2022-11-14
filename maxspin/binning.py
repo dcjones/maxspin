@@ -16,24 +16,24 @@ def kdtree_bin_points(xy, leafsize: int, firstdim: int):
 
     groups = []
 
-    def kdbuild(xy, idxs, dim: int = 0):
+    def kdbuild(xy, idxs, dim: int=0):
         nodesize = xy.shape[0]
 
         if nodesize == leafsize:
             groups.append(idxs)
             return
 
-        perm = xy[:, dim].argsort()
+        perm = xy[:,dim].argsort()
 
-        xy = xy[perm, :]
+        xy = xy[perm,:]
         idxs = idxs[perm]
 
         mid = int(((nodesize / leafsize) // 2) * leafsize)
 
         dim = (dim + 1) % 2
 
-        kdbuild(xy[:mid, :], idxs[:mid], dim)
-        kdbuild(xy[mid:, :], idxs[mid:], dim)
+        kdbuild(xy[:mid,:], idxs[:mid], dim)
+        kdbuild(xy[mid:,:], idxs[mid:], dim)
 
     kdbuild(xy, np.arange(ncells), firstdim)
 
@@ -44,7 +44,7 @@ def kdtree_bin_points(xy, leafsize: int, firstdim: int):
     return clusters
 
 
-def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int = 0):
+def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int=0):
     """
     Spatially bin an AnnData.
     """
@@ -58,7 +58,7 @@ def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int = 0):
     mask = np.ones(ncells, dtype=bool)
     mask[rng.permutation(np.arange(ncells))[0:remainder]] = 0
 
-    adata = adata[mask, :]
+    adata = adata[mask,:]
     ncells, ngenes = adata.shape
 
     xy = np.asarray(adata.obsm["spatial"])
@@ -70,12 +70,12 @@ def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int = 0):
     # X = np.asarray(adata.X)
     X = adata.X
 
-    nclusters = np.max(clusters) + 1
+    nclusters = np.max(clusters)+1
     binned_X = np.zeros((nclusters, ngenes), dtype=X.dtype)
     binned_xy = np.zeros((nclusters, 2), dtype="float64")
     for i in range(ncells):
-        binned_X[clusters[i], :] += X[i, :]
-        binned_xy[clusters[i], :] += xy[i, :]
+        binned_X[clusters[i],:] += X[i,:]
+        binned_xy[clusters[i],:] += xy[i,:]
     binned_xy /= binsize
 
     # make sure we didn't lose anything here
@@ -83,8 +83,7 @@ def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int = 0):
         np.sum(binned_X, dtype=np.float64),
         np.sum(X, dtype=np.float64),
         atol=1e-1,
-        rtol=1e-8,
-    )
+        rtol=1e-8)
 
     # bin standard deviations if they are present
     obsm = {"spatial": binned_xy}
@@ -92,13 +91,15 @@ def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int = 0):
         std = adata.obsm["std"]
         binned_std = np.zeros((nclusters, ngenes))
         for i in range(ncells):
-            binned_std[clusters[i], :] += np.square(std[i, :])
+            binned_std[clusters[i],:] += np.square(std[i,:])
         binned_std = np.sqrt(binned_std)
         obsm["std"] = binned_std
 
     binned_adata = AnnData(
-        X=binned_X, var=adata.var, obsm=obsm, uns={"binsize": binsize}
-    )
+        X=binned_X,
+        var=adata.var,
+        obsm=obsm,
+        uns={"binsize": binsize})
 
     sq.gr.spatial_neighbors(binned_adata, coord_type="generic", delaunay=True)
 
