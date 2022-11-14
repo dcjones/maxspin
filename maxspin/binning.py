@@ -1,3 +1,4 @@
+
 from anndata import AnnData
 import numpy as np
 import squidpy as sq
@@ -42,6 +43,7 @@ def kdtree_bin_points(xy, leafsize: int, firstdim: int):
         clusters[group] = cluster
 
     return clusters
+
 
 
 def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int=0):
@@ -104,3 +106,4 @@ def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int=0):
     sq.gr.spatial_neighbors(binned_adata, coord_type="generic", delaunay=True)
 
     return binned_adata
+
