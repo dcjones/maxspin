@@ -74,7 +74,7 @@ def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int=0):
 
     nclusters = np.max(clusters)+1
     binned_X = np.zeros((nclusters, ngenes), dtype=X.dtype)
-    binned_xy = np.zeros((nclusters, 2), dtype=xy.dtype)
+    binned_xy = np.zeros((nclusters, 2), dtype="float64")
     for i in range(ncells):
         binned_X[clusters[i],:] += X[i,:]
         binned_xy[clusters[i],:] += xy[i,:]
