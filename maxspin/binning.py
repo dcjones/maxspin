@@ -46,7 +46,7 @@ def kdtree_bin_points(xy, leafsize: int, firstdim: int):
 
 
 
-def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int=0):
+def spatially_bin_adata(adata: AnnData, binsize: float, std_layer: str, kdfirstdim: int=0):
     """
     Spatially bin an AnnData.
     """
@@ -81,26 +81,29 @@ def spatially_bin_adata(adata: AnnData, binsize: float, kdfirstdim: int=0):
     binned_xy /= binsize
 
     # make sure we didn't lose anything here
-    assert np.isclose(
-        np.sum(binned_X, dtype=np.float64),
-        np.sum(X, dtype=np.float64),
-        atol=1e-1,
-        rtol=1e-8)
+    # This will tend to fail on non-integer types
+    # assert np.isclose(
+    #     np.sum(binned_X, dtype=np.float64),
+    #     np.sum(X, dtype=np.float64),
+    #     atol=1e-1,
+    #     rtol=1e-8)
 
     # bin standard deviations if they are present
     obsm = {"spatial": binned_xy}
-    if "std" in adata.obsm:
-        std = adata.obsm["std"]
+    layers = {}
+    if std_layer in adata.layers:
+        std = adata.layers[std_layer]
         binned_std = np.zeros((nclusters, ngenes))
         for i in range(ncells):
             binned_std[clusters[i],:] += np.square(std[i,:])
         binned_std = np.sqrt(binned_std)
-        obsm["std"] = binned_std
+        layers[std_layer] = binned_std
 
     binned_adata = AnnData(
         X=binned_X,
         var=adata.var,
         obsm=obsm,
+        layers=layers,
         uns={"binsize": binsize})
 
     sq.gr.spatial_neighbors(binned_adata, coord_type="generic", delaunay=True)

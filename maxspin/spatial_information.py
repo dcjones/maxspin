@@ -29,6 +29,7 @@ def spatial_information(
         max_unimproved_count: Optional[int]=50,
         seed: int=0,
         prior: Optional[str]="gamma",
+        std_layer: str="std",
         prior_k: float=0.01,
         prior_theta: float=1.0,
         prior_a: float=1.0,
@@ -99,8 +100,10 @@ def spatial_information(
             appropriate for proprotional counts. If set to "beta" in conjunction
             with setting `alpha_layer` and `beta_layer` to two separate count layers,
             use a model suitable for testing for spatial patterns in allelic balance.
-            If "gaussian", the model expects a matrix nammed `std` in `obsm` holding
+            If "gaussian", the model expects a matrix nammed `std` in `layers` holding
             standard deviations for the estimates held in `X`.
+        std_layer: Name of layer containing standard deviation estimates for
+            the expression values in X. Should be the same shape as X.
         prior_k: Set the `k` in a `Gamma(k, θ)` if prior is "gamma",
         prior_theta: Set the `θ` in `Gamma(k, θ)` if prior is "gamma",
         prior_a: Use either a `Beta(a, a)` or `Dirichlet(a, a, a, ...)` prior
@@ -162,7 +165,7 @@ def spatial_information(
         cell_counts.append(1)
         objective_weights.append(1.0)
 
-        binned_adatas = [spatially_bin_adata(adata, binsize) for binsize in binsizes]
+        binned_adatas = [spatially_bin_adata(adata, binsize, std_layer) for binsize in binsizes]
         concatenated_adatas.extend(binned_adatas)
         cell_counts.extend(binsizes)
 
@@ -244,9 +247,9 @@ def spatial_information(
     σs = []
     if prior == "gaussian":
         for adata in adatas:
-            if "std" not in adata.obsm:
-                raise Exception("Gaussian prior requires a `std` matrix in `obsm`")
-            σs.append(adata.obsm["std"])
+            if std_layer not in adata.layers:
+                raise Exception(f"Gaussian prior requires a `{std_layer}` matrix in `layers`")
+            σs.append(adata.layers[std_layer])
 
     # Doesn't seem to make a difference, but hypothetically could be more stable
     # when optimizing over a collection of very different datasets.
