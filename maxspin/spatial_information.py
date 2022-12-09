@@ -12,6 +12,7 @@ import numpy as np
 import optax
 import sys
 import h5py
+import time
 
 from .objectives import genewise_js
 from .binning import spatially_bin_adata
@@ -406,6 +407,9 @@ def score_chunk(
         if βs is not None:
             βs = [jax.device_put(β) for β in βs]
 
+        if scales is not None:
+            scales = [jax.device_put(scale) for scale in scales]
+
     # compute means and stds over point estimates so we can shift and scale
     # to make training a little easier.
     post_θ = prior_θ/(prior_θ+1)
@@ -468,7 +472,7 @@ def score_chunk(
                 nwalksteps, step_key, jax.device_put(receivers),
                 jax.device_put(receivers_logits))
 
-            distances = jnp.sqrt(jnp.sum(jnp.square(xys[i] - xys[i][walk_receivers,:]), axis=1))
+            distances = random_walk_distances(xys[i], walk_receivers)
 
             # print((jnp.min(distances), jnp.max(distances)))
 
@@ -596,6 +600,11 @@ def random_walk_matrix(P: sparse.coo.coo_matrix, n: int, stepsize: int):
         receiver_logits[j,0:nreceivers[j]] = np.log(Pk.data[k0:k1])
 
     return (receivers, receiver_logits)
+
+
+@jax.jit
+def random_walk_distances(xys, walk_receivers):
+    return jnp.sqrt(jnp.sum(jnp.square(xys - xys[walk_receivers,:]), axis=1))
 
 
 @partial(jax.jit, static_argnums=(0,))
