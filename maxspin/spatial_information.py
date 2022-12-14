@@ -713,7 +713,7 @@ class MINE(nn.Module):
 
     @nn.compact
     def __call__(self, key, cell_count, distances, u, v, walk_receivers, objective_weights):
-        ncells, ngenes = v.shape
+        ncells, ngenes = u.shape
 
         # intentionally using the same key to get the same permutation here
         u_perm = jax.random.permutation(key, u)

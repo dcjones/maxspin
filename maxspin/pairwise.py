@@ -12,6 +12,7 @@ import optax
 import sys
 
 from .objectives import genewise_js
+from .binning import spatially_bin_adata
 from .spatial_information import check_same_genes, neighbor_transition_matrix, \
     random_walk_matrix, score_chunk, make_train_step, GeneNodePairClassifier
 
@@ -23,11 +24,14 @@ def pairwise_spatial_information(
         stepsize: int=5,
         lr: float=1e-2,
         nepochs: int=8000,
+        binsizes: List[int]=[4, 8, 16],
+        binweights: Union[Callable, List[float]]=lambda binsize: np.sqrt(binsize),
         nevalsamples: int=1000,
         max_unimproved_count: Optional[int]=50,
         seed: int=0,
         prior: Optional[str]="gamma",
-        prior_k: float=0.1,
+        std_layer: str="std",
+        prior_k: float=0.01,
         prior_theta: float=10.0,
         prior_a: float=1.0,
         chunk_size: Optional[int]=None,
@@ -104,6 +108,43 @@ def pairwise_spatial_information(
     ngenes = adatas[0].shape[1]
     quiet or print(f"ngenes: {ngenes}")
 
+    # Binning: bin cells/spots and treat it as further observations, which
+    # can boost sensitivity with sparse data
+    concatenated_adatas = []
+    cell_counts = []
+    objective_weights = []
+    for adata in adatas:
+        concatenated_adatas.append(adata)
+        cell_counts.append(1)
+        objective_weights.append(1.0)
+
+        binned_adatas = [spatially_bin_adata(adata, binsize, std_layer) for binsize in binsizes]
+        concatenated_adatas.extend(binned_adatas)
+        cell_counts.extend(binsizes)
+
+        if isinstance(binweights, Callable):
+            objective_weights.extend([binweights(binsize) for binsize in binsizes])
+        elif isinstance(binweights, List):
+            assert len(binsizes) == len(binweights)
+            objective_weights.extend(binweights)
+
+    adatas = concatenated_adatas
+
+    # Find a reasonable scale for coordinates
+    mean_neighbor_dist = 0.0
+    total_cell_count = 0
+    for adata in adatas:
+        neighbors = adata.obsp["spatial_connectivities"].tocoo()
+        xy = adata.obsm["spatial"]
+        mean_neighbor_dist += \
+            np.sum(np.sqrt(np.sum(np.square(xy[neighbors.row,:] - xy[neighbors.col,:]), axis=1)))
+        total_cell_count += xy.shape[0]
+    mean_neighbor_dist /= total_cell_count
+
+    xys = []
+    for adata in adatas:
+        xys.append(jnp.array(adata.obsm["spatial"] / mean_neighbor_dist))
+
     ncs = [adata.shape[0] for adata in adatas]
     quiet or print(f"ncells: {ncs}")
 
@@ -141,9 +182,9 @@ def pairwise_spatial_information(
     σs = []
     if prior == "gaussian":
         for adata in adatas:
-            if "std" not in adata.obsm:
-                raise Exception("Gaussian prior requires a `std` matrix in `obsm`")
-            σs.append(adata.obsm["std"])
+            if std_layer not in adata.layers:
+                raise Exception(f"Gaussian prior requires a `{std_layer}` matrix in `layers`")
+            σs.append(adata.layers[std_layer])
 
     optimizer = optax.adam(learning_rate=lr)
     train_step = make_train_step(optimizer)
@@ -176,7 +217,10 @@ def pairwise_spatial_information(
                 σs_chunk = [σ[:,gene_from:gene_to] for σ in σs]
 
             scores_chunk, tpr_chunk = score_chunk(
+                xys=xys,
                 us=us_chunk,
+                cell_counts=cell_counts,
+                objective_weights=objective_weights,
                 sample_v=sample_v,
                 u_index=None,
                 v_index=None,
