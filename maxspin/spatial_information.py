@@ -21,6 +21,7 @@ Array = Any
 
 def spatial_information(
         adatas: Union[AnnData, list[AnnData]],
+        layer: Optional[str]=None,
         nwalksteps: int=1,
         stepsize: int=5,
         lr: float=1e-2,
@@ -81,6 +82,7 @@ def spatial_information(
             same order. Each `AnnData` must have a spatial neighborhood graph
             provided in `obsp["spatial_connectivities"]` This can be done with
             the `squidpy.gr.spatial_neighbors` function.
+        layer: Name of layer to use. If `None`, the `X` matrix is used.
         nwalksteps: Random walks take this many steps. Lengthening walks
             (by increasing this parameter or `stepsize`) will make the test less
             sensitive to smaller scale spatial variations, but more sensitive to
@@ -199,7 +201,10 @@ def spatial_information(
     if max_unimproved_count is None:
         max_unimproved_count = nepochs
 
-    us = [adata.X if isinstance(adata.X, np.ndarray) else adata.X.toarray() for adata in adatas]
+    if layer is None:
+        us = [adata.X if isinstance(adata.X, np.ndarray) else adata.X.toarray() for adata in adatas]
+    else:
+        us = [adata.layers[layer] if isinstance(adata.layers[layer], np.ndarray) else adata.layers[layer].toarray() for adata in adatas]
     us = [u.astype(np.float32) for u in us]
 
     Ps = [neighbor_transition_matrix(adata, self_edges=True) for adata in adatas]
@@ -451,7 +456,7 @@ def score_chunk(
             us_samples[i] = sample_signals_gaussian(
                 step_key, u, σs[i], u_means[i], u_stds[i], cell_counts[i])
         else:
-            us_samples[i] = u
+            us_samples[i] = (u - u_means[i]) / u_stds[i]
 
         vs_samples[i] = sample_v(step_key, us_samples[i], i)
 

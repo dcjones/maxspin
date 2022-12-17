@@ -20,6 +20,7 @@ Array = Any
 
 def pairwise_spatial_information(
         adatas: Union[AnnData, list[AnnData]],
+        layer: Optional[str]=None,
         nwalksteps: int=2,
         stepsize: int=5,
         lr: float=1e-2,
@@ -50,6 +51,7 @@ def pairwise_spatial_information(
             same order. Each `AnnData` must have a spatial neighborhood graph
             provided in `obsp["spatial_connectivities"]` This can be done with
             the `squidpy.gr.spatial_neighbors` function.
+        layer: Name of layer to use. If `None`, the `X` matrix is used.
         nwalksteps: Random walks take this many steps. Lengthening walks
             (by increasing this parameter or `stepsize`) will make the test less
             sensitive to smaller scale spatial variations, but more sensitive to
