@@ -1,5 +1,6 @@
 
-# Maxspin
+![Maxspin](https://raw.github.com/dcjones/maxspin/main/logo.png)
+
 
 Maxspin (maximization of spatial information) is an information theoretic
 approach to quantifying the degree of spatial organization in spatial
@@ -9,9 +10,8 @@ transcriptomics (or other spatial omics) data.
 
 The python package can be installed with:
 ```sh
-pip install https://github.com/dcjones/maxspin/tarball/main
+pip install maxspin
 ```
-
 
 ## Basic Usage
 
@@ -31,7 +31,7 @@ Spatial information can then be measured using the `spatial_information` functio
 ```python
 from maxspin import spatial_information
 
-spatial_information(adata)
+spatial_information(adata, prior=None)
 ```
 
 This adds a `spatial_information` column to the `var` metadata.
@@ -45,8 +45,10 @@ subset the `AnnData` object before calling this.
 ```python
 from maxspin import pairwise_spatial_information
 
-pairwise_spatial_information(adata)
+pairwise_spatial_information(adata, prior=None)
 ```
+
+For a more detailed example, check out the [tutorial](https://raw.github.com/dcjones/maxspin/main/tutorial.ipynb).
 
 ## Interpreting the spatial information score
 
