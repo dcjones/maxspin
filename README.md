@@ -48,7 +48,7 @@ from maxspin import pairwise_spatial_information
 pairwise_spatial_information(adata, prior=None)
 ```
 
-For a more detailed example, check out the [tutorial](https://raw.github.com/dcjones/maxspin/main/tutorial.ipynb).
+For a more detailed example, check out the [tutorial](https://github.com/dcjones/maxspin/blob/main/tutorial.ipynb).
 
 ## Interpreting the spatial information score
 
