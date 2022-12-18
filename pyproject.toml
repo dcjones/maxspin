@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "maxspin"
 version = "0.1.0"
-description = ""
+description = "Estimate spatial information in spatial -omics datasets."
 authors = ["Daniel C. Jones <djones3@fredhutch.org>"]
 
 [tool.poetry.dependencies]
