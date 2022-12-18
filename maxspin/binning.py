@@ -2,6 +2,7 @@
 from anndata import AnnData
 import numpy as np
 import squidpy as sq
+from typing import Optional
 
 
 def kdtree_bin_points(xy, leafsize: int, firstdim: int):
@@ -46,7 +47,7 @@ def kdtree_bin_points(xy, leafsize: int, firstdim: int):
 
 
 
-def spatially_bin_adata(adata: AnnData, binsize: float, std_layer: str, kdfirstdim: int=0):
+def spatially_bin_adata(adata: AnnData, binsize: float, std_layer: str, layer: Optional[str]=None, kdfirstdim: int=0):
     """
     Spatially bin an AnnData.
     """
@@ -70,7 +71,10 @@ def spatially_bin_adata(adata: AnnData, binsize: float, std_layer: str, kdfirstd
     # TODO: may need to make this dense if its a hdf5 dataset, but don't
     # do this to a sparse arrays. Hmm.
     # X = np.asarray(adata.X)
-    X = adata.X
+    if layer is None:
+        X = adata.X
+    else:
+        X = adata.layers[layer]
 
     nclusters = np.max(clusters)+1
     binned_X = np.zeros((nclusters, ngenes), dtype=X.dtype)
@@ -98,6 +102,9 @@ def spatially_bin_adata(adata: AnnData, binsize: float, std_layer: str, kdfirstd
             binned_std[clusters[i],:] += np.square(std[i,:])
         binned_std = np.sqrt(binned_std)
         layers[std_layer] = binned_std
+
+    if layer is not None:
+        layers[layer] = binned_X
 
     binned_adata = AnnData(
         X=binned_X,

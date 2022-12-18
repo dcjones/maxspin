@@ -120,7 +120,7 @@ def pairwise_spatial_information(
         cell_counts.append(1)
         objective_weights.append(1.0)
 
-        binned_adatas = [spatially_bin_adata(adata, binsize, std_layer) for binsize in binsizes]
+        binned_adatas = [spatially_bin_adata(adata, binsize, std_layer, layer=layer) for binsize in binsizes]
         concatenated_adatas.extend(binned_adatas)
         cell_counts.extend(binsizes)
 
@@ -131,6 +131,8 @@ def pairwise_spatial_information(
             objective_weights.extend(binweights)
 
     adatas = concatenated_adatas
+
+    print(len(adatas))
 
     # Find a reasonable scale for coordinates
     mean_neighbor_dist = 0.0
@@ -153,7 +155,10 @@ def pairwise_spatial_information(
     if max_unimproved_count is None:
         max_unimproved_count = nepochs
 
-    us = [adata.X if isinstance(adata.X, np.ndarray) else adata.X.toarray() for adata in adatas]
+    if layer is None:
+        us = [adata.X if isinstance(adata.X, np.ndarray) else adata.X.toarray() for adata in adatas]
+    else:
+        us = [adata.layers[layer] if isinstance(adata.layers[layer], np.ndarray) else adata.layers[layer].toarray() for adata in adatas]
     us = [u.astype(np.float32) for u in us]
 
     Ps = [neighbor_transition_matrix(adata) for adata in adatas]

@@ -168,7 +168,7 @@ def spatial_information(
         cell_counts.append(1)
         objective_weights.append(1.0)
 
-        binned_adatas = [spatially_bin_adata(adata, binsize, std_layer) for binsize in binsizes]
+        binned_adatas = [spatially_bin_adata(adata, binsize, std_layer, layer=layer) for binsize in binsizes]
         concatenated_adatas.extend(binned_adatas)
         cell_counts.extend(binsizes)
 
