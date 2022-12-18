@@ -3,6 +3,10 @@ name = "maxspin"
 version = "0.1.0"
 description = "Estimate spatial information in spatial -omics datasets."
 authors = ["Daniel C. Jones <djones3@fredhutch.org>"]
+homepage = "https://github.com/dcjones/maxspin"
+repository = "https://github.com/dcjones/maxspin"
+documentation = "https://github.com/dcjones/maxspin"
+readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.8,<3.11"
