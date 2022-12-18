@@ -62,9 +62,48 @@ cells is considered more spatially coherent, hence the sum.
 
 There are different ways spatial information can be computed. By default, no
 normalization is done and spatial information is computed on absolute counts.
-Uncertainty is incorporated using a Gamma-Poisson model. Whether this is
-appropriate or not depends on the platform. Often the total counts per cell or
-spot is a confounding factor that should be normalized out.
+Uncertainty is incorporated using a Gamma-Poisson model.
+
+If `prior=None` is used, the method makes no attempt to account for estimation
+uncertainty and computes spatial information directly on whatever is in
+`adata.X`.
+
+The recommended way to run `spatial_information` is with some kind of normalized
+estimate of expression with some uncertainty estimation. There are two
+recommended ways of doing this: SCVI and Vanity.
+
+
+## SCVI
+
+[SCVI](https://scvi-tools.org/) is a convenient and versatile probabilistic
+model of sequencing experiments, from which we can sample from the posterior to
+get normalized point estimates with uncertainty.
+
+Using Maxspin with SCVI looks something like this:
+
+
+```python
+import scvi
+import numpy as np
+from maxspin import spatial_information
+
+scvi.model.SCVI.setup_anndata(adata)
+model = scvi.model.SCVI(adata, n_latent=20)
+
+# Sample log-expression values from the posterior.
+posterior_samples = np.log(model.get_normalized_expression(return_numpy=True, return_mean=False, n_samples=20, library_size="latent"))
+adata_scvi = adata.copy()
+adata_scvi.X = np.mean(posterior_samples, axis=0)
+adata_scvi.layers["std"] = np.std(posterior_samples, axis=0)
+
+spatial_information(adata_scvi, prior="gaussian")
+```
+
+The [tutorial](https://github.com/dcjones/maxspin/blob/main/tutorial.ipynb) has
+a more in depth example of using SCVI.
+
+## Vanity
+
 
 I developed the normalization method [vanity](https://github.com/dcjones/vanity)
 in part as convenient way to normalize spatial transcriptomics data in a way
@@ -75,23 +114,10 @@ from maxspin import spatial_information
 from vanity import normalize_vanity
 
 normalize_vanity(adata)
-spatial_information(adata, prior="normal")
+spatial_information(adata, prior="gaussian")
 
 ```
 
-If you'd like to avoid the trouble of using uncertainty estimates, and use more
-standard normalization methods, the simplest thing to do right now is to set the
-standard deviation to some small value, like so
-```python
-from maxspin import spatial_information
-import scanpy as sc
-import numpy as np
-
-sc.pp.normalize_total(adata)
-sc.pp.log1p(adata)
-
-adata.obsm["std"] = np.full(adata.shape, 1e-6)
-spatial_information(adata_norm, prior="normal")
-
-```
-
+Compared to SCVI, this model more aggressively shrinks low expression genes,
+which might cause it to miss something very subtle, but is less likely to detect
+spurious patterns.
