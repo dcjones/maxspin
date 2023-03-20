@@ -4,6 +4,7 @@ from flax import linen as nn
 from functools import partial
 from jax.experimental.maps import FrozenDict
 from scipy import sparse
+from scipy.stats import binom
 from tqdm import tqdm
 from typing import Optional, Any, Callable, List, Union
 import jax
@@ -138,6 +139,9 @@ def spatial_information(
 
         - `anndata.AnnData.var["spatial_information"]`: Lower bound on spatial
             information for each gene.
+        - `anndata.AnnData.var["spatial_information_pvalue"]`: P-values from
+            testing the null hypothesis of no spatial organization.
+        - `anndata.AnnData.var["spatial_information_pvalue"]`: Log transformed p-values.
         - `anndata.AnnData.layers["spatial_information_acc"]`: Per spot/cell
             classifier accuracy. Useful for visualizing what regions were
             inferred to have high spatial coherence..
@@ -325,8 +329,13 @@ def spatial_information(
     scores = jnp.concatenate(scores_chunks)
     tpr = jnp.concatenate(tpr_chunks, axis=1)
 
+    pvalues = binom(tpr.shape[0], 0.5).cdf(np.sum(tpr < 0.05, axis=0))
+    log_pvalues = binom(tpr.shape[0], 0.5).logcdf(np.sum(tpr < 0.05, axis=0))
+
     for adata in adatas:
         adata.var["spatial_information"] = np.array(scores)
+        adata.var["spatial_information_pvalue"] = pvalues
+        adata.var["spatial_information_log_pvalue"] = log_pvalues
 
         # This is mostly monotonic, and arguably more interpretable
         # adata.var["spatial_information"] = np.mean(np.array(tpr), axis=0)
