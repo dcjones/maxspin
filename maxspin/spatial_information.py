@@ -14,6 +14,7 @@ import optax
 import sys
 import h5py
 import time
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .objectives import genewise_js
 from .binning import spatially_bin_adata
@@ -794,7 +795,7 @@ def eval_step(modelargs, vars, key, cell_count, distances, v, u, walk_receivers,
 
 @jax.jit
 def sample_signals_gamma(key, v, v_mean, v_std, post_θ, prior_k, cell_count):
-    v_sample = jnp.log1p(post_θ * jax.random.gamma(key, v + prior_k * cell_count) / cell_count)
+    v_sample = jnp.log1p(tfd.Gamma(concentration=v + prior_k * cell_count, rate=cell_count/post_θ).sample(seed=key))
     v_sample = (v_sample - v_mean) / v_std
     return v_sample
 
