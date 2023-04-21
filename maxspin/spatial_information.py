@@ -2,7 +2,7 @@
 from anndata import AnnData
 from flax import linen as nn
 from functools import partial
-from jax.experimental.maps import FrozenDict
+from flax.core import FrozenDict
 from scipy import sparse
 from scipy.stats import binom
 from tqdm import tqdm

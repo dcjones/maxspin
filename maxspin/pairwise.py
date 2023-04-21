@@ -1,7 +1,6 @@
 from anndata import AnnData
 from flax import linen as nn
 from functools import partial
-from jax.experimental.maps import FrozenDict
 from scipy import sparse
 from tqdm import tqdm
 from typing import Optional, Any, Callable, List, Union
@@ -200,28 +199,33 @@ def pairwise_spatial_information(
 
     for receiver_gene in range(ngenes):
         print(f"Scoring all pairs with gene {receiver_gene}")
-        sample_v = lambda key, u, i: u[:,receiver_gene:receiver_gene+1]
+
+        # Always putting the receiver gene at the front of the chunk
+        def sample_v(key, u, i):
+            return u[:, 0:1]
 
         scores_chunks = []
         tpr_chunks = []
         for gene_from in range(0, ngenes, chunk_size):
             gene_to = min(gene_from + chunk_size, ngenes)
 
-            us_chunk = [u[:,gene_from:gene_to] for u in us]
+            chunk_span = [receiver_gene] + list(range(gene_from, gene_to))
+
+            us_chunk = [u[:,chunk_span] for u in us]
             αs_chunk = None
             βs_chunk = None
             σs_chunk = None
 
             if prior == "beta":
-                αs_chunk = [α[:,gene_from:gene_to] + prior_a for α in αs]
-                βs_chunk = [β[:,gene_from:gene_to] + prior_a for β in βs]
+                αs_chunk = [α[:,chunk_span] + prior_a for α in αs]
+                βs_chunk = [β[:,chunk_span] + prior_a for β in βs]
             elif prior == "dirichlet":
                 for u in us_chunk:
                     u += prior_a
                 αs_chunk = [np.sum(u, axis=1) for u in us_chunk]
-                βs_chunk = [np.sum(u + prior_a, axis=1) - α for (α, u) in zip(αs_chunk, us)]
+                βs_chunk = [np.sum(u + prior_a, axis=1) - α for (α, u) in zip(αs_chunk, us_chunk)]
             elif prior == "gaussian":
-                σs_chunk = [σ[:,gene_from:gene_to] for σ in σs]
+                σs_chunk = [σ[:,chunk_span] for σ in σs]
 
             scores_chunk, tpr_chunk = score_chunk(
                 xys=xys,
@@ -253,8 +257,8 @@ def pairwise_spatial_information(
                 preload=preload,
                 quiet=quiet)
 
-            scores_chunks.append(scores_chunk)
-            tpr_chunks.append(tpr_chunk)
+            scores_chunks.append(scores_chunk[1:])
+            tpr_chunks.append(tpr_chunk[:,1:])
 
         scores[:,receiver_gene] = jnp.concatenate(scores_chunks)
 
