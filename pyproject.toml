@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "maxspin"
-version = "0.1.0"
+version = "0.1.1"
 description = "Estimate spatial information in spatial -omics datasets."
 authors = ["Daniel C. Jones <djones3@fredhutch.org>"]
 homepage = "https://github.com/dcjones/maxspin"
@@ -10,13 +10,15 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.8,<3.11"
-jax = "^0.3.13"
+jax = "^0.4.8"
 anndata = "^0.8.0"
 numpy = "^1.22.3"
 scipy = "^1.8.1"
-flax = "^0.4.2"
+flax = "^0.6.9"
 tqdm = "^4.64.0"
 optax = "^0.1.2"
+tensorflow-probability = "^0.19.0"
+squidpy = "^1.2.3"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
