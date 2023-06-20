@@ -142,7 +142,7 @@ def spatial_information(
             information for each gene.
         - `anndata.AnnData.var["spatial_information_pvalue"]`: P-values from
             testing the null hypothesis of no spatial organization.
-        - `anndata.AnnData.var["spatial_information_pvalue"]`: Log transformed p-values.
+        - `anndata.AnnData.var["spatial_information_log_pvalue"]`: Log transformed p-values.
         - `anndata.AnnData.layers["spatial_information_acc"]`: Per spot/cell
             classifier accuracy. Useful for visualizing what regions were
             inferred to have high spatial coherence..
@@ -661,7 +661,7 @@ def check_same_genes(adatas: list[AnnData]):
     """
 
     for adata in adatas[1:]:
-        if adata.var_names != adatas[0].var_names:
+        if not all(adata.var_names == adatas[0].var_names):
             raise Exception("AnnData objects must have the same set of genes")
 
 
