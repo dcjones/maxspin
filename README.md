@@ -6,6 +6,13 @@ Maxspin (maximization of spatial information) is an information theoretic
 approach to quantifying the degree of spatial organization in spatial
 transcriptomics (or other spatial omics) data.
 
+Our paper describing and benchmarking this method is out now in Cell Reports Methods:
+
+> Jones, D.C., Danaher, P., Kim, Y., Beechem, J.M., Gottardo, R. and Newell, E.W.
+(2023) [An information theoretic approach to detecting spatially varying
+genes.](https://www.cell.com/cell-reports-methods/fulltext/S2667-2375(23)00136-4)
+Cell Reports Methods.
+
 ## Installation
 
 The python package can be installed with:
