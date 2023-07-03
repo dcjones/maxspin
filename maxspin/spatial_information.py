@@ -11,9 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import sys
-import h5py
-import time
+# import h5py
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .objectives import genewise_js
@@ -53,8 +51,9 @@ def spatial_information(
     computed jointly across each.
 
     Every adata must have a spatial neighborhood graph provided. The easiest way
-    to do this is with:
-        `squidpy.gr.spatial_neighbors(adata, delaunay=True, coord_type="generic")`
+    to do this is with::
+
+        squidpy.gr.spatial_neighbors(adata, delaunay=True, coord_type="generic")
 
     Spatial information scores, which are added to the
     `adata.var["spatial_information"]`, represent a lower bound on spatial
