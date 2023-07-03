@@ -2,6 +2,7 @@
 ![Maxspin](https://raw.github.com/dcjones/maxspin/main/logo.png)
 
 ![CI](https://github.com/dcjones/maxspin/actions/workflows/ci.yml/badge.svg)
+![docs](https://readthedocs.org/projects/maxspin/badge/?version=latest)
 
 
 Maxspin (maximization of spatial information) is an information theoretic
