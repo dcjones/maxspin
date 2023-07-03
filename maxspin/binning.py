@@ -1,8 +1,20 @@
 
 from anndata import AnnData
 import numpy as np
-import squidpy as sq
+# import squidpy as sq
 from typing import Optional
+from scipy.spatial import Delaunay
+from scipy.sparse import csr_matrix
+
+
+def spatial_neighbors(adata: AnnData):
+    triangulation = Delaunay(adata.obsm["spatial"])
+    indptr, indices = triangulation.vertex_neighbor_vertices
+
+    adata.obsp["spatial_connectivities"] = csr_matrix(
+        (np.ones_like(indices, dtype=np.float32),
+        indices, indptr),
+        shape=(adata.n_obs, adata.n_obs))
 
 
 def kdtree_bin_points(xy, leafsize: int, firstdim: int):
@@ -114,7 +126,7 @@ def spatially_bin_adata(adata: AnnData, binsize: float, std_layer: str, layer: O
         uns={"binsize": binsize},
         dtype=X.dtype)
 
-    sq.gr.spatial_neighbors(binned_adata, coord_type="generic", delaunay=True)
+    spatial_neighbors(binned_adata)
 
     return binned_adata
 
