@@ -18,7 +18,7 @@ from .spatial_information import check_same_genes, neighbor_transition_matrix, \
 Array = Any
 
 def pairwise_spatial_information(
-        adatas: Union[AnnData, list[AnnData]],
+        adatas: Union[AnnData, List[AnnData]],
         layer: Optional[str]=None,
         nwalksteps: int=2,
         stepsize: int=5,

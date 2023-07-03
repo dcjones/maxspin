@@ -22,7 +22,7 @@ from .binning import spatially_bin_adata
 Array = Any
 
 def spatial_information(
-        adatas: Union[AnnData, list[AnnData]],
+        adatas: Union[AnnData, List[AnnData]],
         layer: Optional[str]=None,
         nwalksteps: int=1,
         stepsize: int=5,
@@ -589,7 +589,7 @@ def neighbor_transition_matrix(adata: AnnData, self_edges: bool=True):
     return P
 
 
-def random_walk_matrix(P: sparse.coo.coo_matrix, n: int, stepsize: int):
+def random_walk_matrix(P: sparse.coo_matrix, n: int, stepsize: int):
     """
     Construct a transition matrix for a `stepsize` random walk from each node. Each
     node has a row of destination nodes in one matrix and transition probability
@@ -655,7 +655,7 @@ def estimate_scale_factors(us: list, prior_a: float):
     return scales
 
 
-def check_same_genes(adatas: list[AnnData]):
+def check_same_genes(adatas: List[AnnData]):
     """
     Make sure each AnnData in a list has the same set of genes.
     """
