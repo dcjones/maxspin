@@ -61,7 +61,7 @@ def pairwise_spatial_information(
         nepochs: Run the optimization step for this many iterations.
         nevalsamples: Estimate MI bound by resampling expression and random
             walks this many times.
-        max_unimproved_count: Early stopping criteria for optimization. If the
+        max_unimproved_iount: Early stopping criteria for optimization. If the
             the MI lower bound has not been improved for any gene for this many
             iterations, stop iterating.
         seed: Random number generator seed.
@@ -131,8 +131,6 @@ def pairwise_spatial_information(
 
     adatas = concatenated_adatas
 
-    print(len(adatas))
-
     # Find a reasonable scale for coordinates
     mean_neighbor_dist = 0.0
     total_cell_count = 0
@@ -198,7 +196,7 @@ def pairwise_spatial_information(
     scores = np.zeros((ngenes, ngenes), dtype=np.float32)
 
     for receiver_gene in range(ngenes):
-        print(f"Scoring all pairs with gene {receiver_gene}")
+        quiet or print(f"Scoring all pairs with gene {receiver_gene}")
 
         # Always putting the receiver gene at the front of the chunk
         def sample_v(key, u, i):

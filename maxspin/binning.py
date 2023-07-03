@@ -111,7 +111,8 @@ def spatially_bin_adata(adata: AnnData, binsize: float, std_layer: str, layer: O
         var=adata.var,
         obsm=obsm,
         layers=layers,
-        uns={"binsize": binsize})
+        uns={"binsize": binsize},
+        dtype=X.dtype)
 
     sq.gr.spatial_neighbors(binned_adata, coord_type="generic", delaunay=True)
 
